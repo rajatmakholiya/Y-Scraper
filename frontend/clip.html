@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Clip Video — Video Downloader</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container">
+      <a href="dashboard.html" style="text-decoration: none; color: inherit;">
+        <h2>Video Downloader</h2>
+      </a>
+      <button id="btn-logout" class="btn small">Logout</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h3 id="video-title">Loading...</h3>
+      <video id="video-player" controls style="width: 100%; border-radius: 8px; margin-top: 1rem; background-color: #000;"></video>
+    </section>
+
+    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 2rem;">
+        <section class="card">
+            <h3>Create a New Clip</h3>
+            <p class="muted">
+                Use the player to find timestamps. Format: HH:MM:SS or MM:SS.
+            </p>
+            <div class="form-row">
+                <input id="start-time" type="text" placeholder="Start (e.g., 01:23)" />
+                <input id="end-time" type="text" placeholder="End (e.g., 01:45)" />
+            </div>
+             <button id="btn-create-clip" class="btn" style="margin-top: 1rem;">Queue Clip</button>
+            <div id="clip-error" style="color: var(--danger-color); margin-top: 1rem; font-weight: 500;"></div>
+        </section>
+
+        <section class="card">
+            <h3>Queued & Completed Clips</h3>
+            <ul id="clips-list" class="list">
+                <li class="muted">No clips created yet.</li>
+            </ul>
+        </section>
+    </div>
+  </main>
+
+  <script src="clip.js"></script>
+</body>
+</html>
