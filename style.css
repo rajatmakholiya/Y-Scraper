@@ -1,0 +1,136 @@
+:root {
+  --bg: #0f1720;
+  --card: #0b1220;
+  --muted: #94a3b8;
+  --accent: #06b6d4;
+  --accent-2: #7c3aed;
+  --text: #e6eef6;
+  --glass: rgba(255, 255, 255, 0.03);
+}
+* {
+  box-sizing: border-box;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+body {
+  margin: 0;
+  background: linear-gradient(180deg, var(--bg), #071021);
+  color: var(--text);
+  min-height: 100vh;
+}
+.container {
+  max-width: 1000px;
+  margin: 24px auto;
+  padding: 16px;
+}
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+}
+.card {
+  background: var(--card);
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(2, 6, 23, 0.6);
+  width: 420px;
+}
+h1,
+h2,
+h3 {
+  margin: 0 0 12px 0;
+}
+.muted {
+  color: var(--muted);
+  font-size: 14px;
+}
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.tab {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tab.active {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  color: #061220;
+  font-weight: 600;
+}
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.form input {
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: transparent;
+  color: var(--text);
+}
+.btn {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: none;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  color: #061220;
+  cursor: pointer;
+  font-weight: 700;
+}
+.btn.small {
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.hidden {
+  display: none;
+}
+.footer {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.topbar {
+  background: rgba(2, 6, 23, 0.6);
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+.topbar .container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 18px;
+}
+.card .form-row {
+  display: flex;
+  gap: 8px;
+}
+.form-row input {
+  flex: 1;
+}
+.mt {
+  margin-top: 12px;
+}
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+}
+.list-item {
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--glass);
+  margin-bottom: 8px;
+}
+a {
+  color: var(--accent);
+}

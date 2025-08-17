@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dashboard — Video Downloader</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container">
+      <h2>Video Downloader</h2>
+      <div>
+        <button id="btn-logout" class="btn small">Logout</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container grid">
+    <section class="card">
+      <h3>Download a permitted video</h3>
+      <p class="muted">Provide a direct MP4 URL or a non-DRM HLS master (.m3u8).</p>
+      <div class="form-row">
+        <input id="video-url" type="url" placeholder="https://example.com/video.mp4 or master.m3u8" />
+        <button id="btn-download" class="btn">Start Download</button>
+      </div>
+
+      <div id="progress-area" class="mt">
+        <div id="progress-msg" class="muted"></div>
+        <progress id="progress-bar" value="0" max="100" style="width:100%; display:none"></progress>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Recent downloads</h3>
+      <ul id="recent-list" class="list"></ul>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+  <script>
+    const token = localStorage.getItem('token')
+    if (!token) {
+      window.location.href = 'index.html'
+    }
+
+    document.getElementById('btn-logout').addEventListener('click', () => {
+      localStorage.removeItem('token')
+      window.location.href = 'index.html'
+    })
+
+    async function refreshRecent() {
+      const res = await apiCall('/api/recent', 'GET', null, token)
+      const list = document.getElementById('recent-list')
+      list.innerHTML = ''
+      if (!res || !res.downloads) {
+        list.innerHTML = '<li class="muted">No downloads yet.</li>'
+        return
+      }
+      for (const d of res.downloads) {
+        const li = document.createElement('li')
+        li.className = 'list-item'
+        const a = document.createElement('a')
+        a.href = `/api/file/${d.id}`
+        a.textContent = `${d.title} (${prettySize(d.size_bytes)})`
+        a.addEventListener('click', (ev) => {
+          // fetch with token (create a hidden anchor for same-origin)
+          ev.preventDefault()
+          downloadFile(d.id)
+        })
+        li.appendChild(a)
+        list.appendChild(li)
+      }
+    }
+
+    function prettySize(b) {
+      if (!b) return '0 B'
+      const units = ['B','KB','MB','GB','TB']
+      let i = 0
+      let n = b
+      while (n >= 1024 && i < units.length-1) {
+        n /= 1024
+        i++
+      }
+      return `${n.toFixed(2)} ${units[i]}`
+    }
+
+    async function downloadFile(id) {
+      const token = localStorage.getItem('token')
+      const url = `/api/file/${id}`
+      // create a hidden form to download with Authorization header is not possible via anchor.
+      // Use fetch and create blob -> download link
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) {
+        alert('Failed to fetch file')
+        return
+      }
+      const blob = await res.blob()
+      const cd = res.headers.get('content-disposition') || ''
+      const filenameMatch = /filename="?([^"]+)"?/.exec(cd)
+      const filename = filenameMatch ? filenameMatch[1] : `download_${id}.mp4`
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      URL.revokeObjectURL(link.href)
+      link.remove()
+    }
+
+    document.getElementById('btn-download').addEventListener('click', async () => {
+      const url = document.getElementById('video-url').value.trim()
+      if (!url) return alert('Provide a URL')
+      document.getElementById('progress-msg').textContent = 'Starting...'
+      document.getElementById('progress-bar').style.display = 'block'
+      document.getElementById('progress-bar').value = 0
+
+      const res = await apiCall('/api/download', 'POST', { url }, token)
+      if (!res) {
+        alert('Download failed')
+        document.getElementById('progress-msg').textContent = ''
+        document.getElementById('progress-bar').style.display = 'none'
+        return
+      }
+      if (res.error) {
+        alert('Error: ' + res.error)
+        document.getElementById('progress-bar').style.display = 'none'
+        document.getElementById('progress-msg').textContent = ''
+        return
+      }
+      // Completed (synchronous for now)
+      document.getElementById('progress-msg').textContent = `Completed: ${res.title} (${prettySize(res.size_bytes)})`
+      document.getElementById('progress-bar').value = 100
+      await refreshRecent()
+    })
+
+    // load on start
+    refreshRecent()
+  </script>
+</body>
+</html>

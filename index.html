@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Video Downloader — Login</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="center">
+    <div class="card">
+      <h1>Video Downloader</h1>
+
+      <div id="auth-area">
+        <div class="tabs">
+          <button id="tab-login" class="tab active">Login</button>
+          <button id="tab-register" class="tab">Register</button>
+        </div>
+
+        <form id="form-login" class="form">
+          <input id="login-email" type="email" placeholder="Email" required />
+          <input id="login-password" type="password" placeholder="Password" required />
+          <button type="submit" class="btn">Login</button>
+        </form>
+
+        <form id="form-register" class="form hidden">
+          <input id="reg-email" type="email" placeholder="Email" required />
+          <input id="reg-password" type="password" placeholder="Password" required />
+          <button type="submit" class="btn">Register</button>
+        </form>
+
+        <div id="auth-msg" class="muted"></div>
+      </div>
+
+      <div class="footer muted">
+        After login you'll be taken to the dashboard.
+      </div>
+    </div>
+  </main>
+
+  <script src="script.js"></script>
+  <script>
+    // small wiring for index -> dashboard
+    document.getElementById('tab-login').addEventListener('click', () => {
+      document.getElementById('tab-login').classList.add('active')
+      document.getElementById('tab-register').classList.remove('active')
+      document.getElementById('form-login').classList.remove('hidden')
+      document.getElementById('form-register').classList.add('hidden')
+    })
+    document.getElementById('tab-register').addEventListener('click', () => {
+      document.getElementById('tab-register').classList.add('active')
+      document.getElementById('tab-login').classList.remove('active')
+      document.getElementById('form-register').classList.remove('hidden')
+      document.getElementById('form-login').classList.add('hidden')
+    })
+
+    // login
+    const loginForm = document.getElementById('form-login')
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const email = document.getElementById('login-email').value
+      const password = document.getElementById('login-password').value
+      const res = await apiCall('/api/login', 'POST', { email, password })
+      if (res && res.access_token) {
+        localStorage.setItem('token', res.access_token)
+        window.location.href = 'dashboard.html'
+      } else {
+        showAuthMsg(res?.error || 'Login failed')
+      }
+    })
+
+    // register
+    const regForm = document.getElementById('form-register')
+    regForm.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const email = document.getElementById('reg-email').value
+      const password = document.getElementById('reg-password').value
+      const res = await apiCall('/api/register', 'POST', { email, password })
+      if (res && res.access_token) {
+        localStorage.setItem('token', res.access_token)
+        window.location.href = 'dashboard.html'
+      } else {
+        showAuthMsg(res?.error || 'Registration failed')
+      }
+    })
+
+    function showAuthMsg(msg) {
+      const el = document.getElementById('auth-msg')
+      el.textContent = msg
+      setTimeout(() => (el.textContent = ''), 5000)
+    }
+  </script>
+</body>
+</html>
