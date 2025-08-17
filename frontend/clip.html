@@ -37,9 +37,19 @@
         </section>
 
         <section class="card">
-            <h3>Queued & Completed Clips</h3>
-            <ul id="clips-list" class="list">
-                <li class="muted">No clips created yet.</li>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h3>Clip Queues</h3>
+              <button id="btn-clear-queue" class="btn small btn-delete">Clear All</button>
+            </div>
+
+            <h4 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Pending &amp; Processing</h4>
+            <ul id="pending-list" class="list">
+                <li class="muted">No pending clips.</li>
+            </ul>
+
+            <h4 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Completed</h4>
+            <ul id="completed-list" class="list">
+                <li class="muted">No completed clips.</li>
             </ul>
         </section>
     </div>

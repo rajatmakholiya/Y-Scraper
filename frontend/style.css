@@ -99,7 +99,9 @@ main.container {
   gap: 0.5rem;
 }
 
-input[type="url"] {
+/* MODIFIED: Applied styles to input[type="text"] as well */
+input[type="url"],
+input[type="text"] {
   flex: 1;
   padding: 0.75rem 1rem;
   border: 1px solid var(--border-color);
@@ -110,7 +112,9 @@ input[type="url"] {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-input[type="url"]:focus {
+/* MODIFIED: Applied focus styles to input[type="text"] as well */
+input[type="url"]:focus,
+input[type="text"]:focus {
   outline: none;
   border-color: var(--accent-color);
   box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.3);
@@ -202,7 +206,6 @@ input[type="url"]:focus {
     background-color: rgba(29, 38, 51, 0.8); /* Highlight on hover */
 }
 
-/* MODIFIED: Flexbox layout for list items */
 .list-item-content {
     display: flex;
     justify-content: space-between;
@@ -215,7 +218,6 @@ input[type="url"]:focus {
     display: flex;
     align-items: baseline;
     gap: 0.5rem;
-    /* Allow this container to shrink if needed */
     min-width: 100px;
     flex: 1;
 }

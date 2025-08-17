@@ -68,20 +68,21 @@ document.addEventListener("DOMContentLoaded", () => {
 async function initializeClipPage(token, downloadId) {
     const videoTitle = document.getElementById("video-title");
     const createClipButton = document.getElementById("btn-create-clip");
+    const clearQueueButton = document.getElementById("btn-clear-queue");
 
     try {
         const data = await apiCall(`/api/download/${downloadId}/details`, "GET", null, token);
         videoTitle.textContent = data.title;
         
-        // MODIFIED: Load video with authentication
         await loadVideoPlayer(token, downloadId);
         
         renderClips(data.clips, token);
 
         createClipButton.addEventListener("click", () => createClip(token, downloadId));
+        clearQueueButton.addEventListener("click", () => clearQueue(token, downloadId));
 
         // Periodically refresh the clips list to update their status
-        setInterval(() => refreshClips(token, downloadId), 5000);
+        setInterval(() => refreshClips(token, downloadId), 3000);
     } catch (err) {
         alert("Failed to load video details: " + err.message);
         window.location.href = "dashboard.html";
@@ -89,7 +90,7 @@ async function initializeClipPage(token, downloadId) {
 }
 
 /**
- * NEW: Fetches the video file with authentication and loads it into the player.
+ * Fetches the video file with authentication and loads it into the player.
  */
 async function loadVideoPlayer(token, downloadId) {
     const videoPlayer = document.getElementById("video-player");
@@ -98,9 +99,7 @@ async function loadVideoPlayer(token, downloadId) {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        if (!res.ok) {
-            throw new Error(`Server responded with status ${res.status}`);
-        }
+        if (!res.ok) throw new Error(`Server responded with status ${res.status}`);
 
         const videoBlob = await res.blob();
         const videoObjectUrl = URL.createObjectURL(videoBlob);
@@ -113,12 +112,13 @@ async function loadVideoPlayer(token, downloadId) {
     }
 }
 
-
+/**
+ * MODIFIED: Handles the creation of a new clip with immediate UI update.
+ */
 async function createClip(token, downloadId) {
     const startTimeInput = document.getElementById("start-time");
     const endTimeInput = document.getElementById("end-time");
     const errorDiv = document.getElementById("clip-error");
-
     errorDiv.textContent = "";
 
     if (!startTimeInput.value || !endTimeInput.value) {
@@ -127,72 +127,135 @@ async function createClip(token, downloadId) {
     }
 
     try {
+        // 1. Send the request to the backend to start the clipping job.
         await apiCall("/api/clip", "POST", {
             download_id: downloadId,
             start_time: startTimeInput.value,
             end_time: endTimeInput.value,
         }, token);
         
+        // 2. Clear the input fields.
         startTimeInput.value = "";
         endTimeInput.value = "";
-        // Refresh immediately to show the new pending clip
-        await refreshClips(token, downloadId);
+
+        // 3. Perform a quick refresh to immediately show the new "Pending" item.
+        // We don't need to wait for the full polling cycle.
+        const data = await apiCall(`/api/download/${downloadId}/details`, "GET", null, token);
+        if (data && data.clips) {
+            renderClips(data.clips, token);
+        }
+
     } catch (err) {
         errorDiv.textContent = "Error: " + err.message;
     }
 }
 
 /**
- * Fetches the latest clips data and re-renders the list.
+ * Handles clearing the entire clip queue.
  */
-async function refreshClips(token, downloadId) {
-    const data = await apiCall(`/api/download/${downloadId}/details`, "GET", null, token);
-    if (data && data.clips) {
-        renderClips(data.clips, token);
+async function clearQueue(token, downloadId) {
+    if (!confirm("Are you sure you want to delete all clips and cancel any pending jobs? This cannot be undone.")) {
+        return;
+    }
+    try {
+        await apiCall(`/api/download/${downloadId}/clips`, 'DELETE', null, token);
+        await refreshClips(token, downloadId);
+    } catch (err) {
+        alert("Failed to clear queue: " + err.message);
     }
 }
 
+
 /**
- * Renders the list of clips with their current status.
+ * Fetches the latest clips data, triggers status checks, and re-renders the lists.
+ */
+async function refreshClips(token, downloadId) {
+    try {
+        const data = await apiCall(`/api/download/${downloadId}/details`, "GET", null, token);
+        if (!data || !data.clips) {
+            renderClips([], token);
+            return;
+        }
+
+        const pendingClips = data.clips.filter(c => c.status === 'PENDING' || c.status === 'PROCESSING');
+        
+        // If there are no pending clips, we don't need to do the heavy update.
+        if (pendingClips.length === 0) {
+            renderClips(data.clips, token);
+            return;
+        }
+
+        const statusUpdatePromises = pendingClips.map(clip => 
+            apiCall(`/api/clip/${clip.id}/status`, 'GET', null, token)
+        );
+
+        await Promise.all(statusUpdatePromises);
+
+        const updatedData = await apiCall(`/api/download/${downloadId}/details`, "GET", null, token);
+        if (updatedData && updatedData.clips) {
+            renderClips(updatedData.clips, token);
+        }
+
+    } catch(err) {
+        console.error("Stopping refresh due to error:", err.message);
+    }
+}
+
+
+/**
+ * Renders clips into separate pending and completed lists.
  */
 function renderClips(clips, token) {
-    const list = document.getElementById("clips-list");
-    list.innerHTML = "";
+    const pendingList = document.getElementById("pending-list");
+    const completedList = document.getElementById("completed-list");
+    pendingList.innerHTML = "";
+    completedList.innerHTML = "";
 
-    if (!clips || clips.length === 0) {
-        list.innerHTML = '<li class="muted">No clips created yet.</li>';
-        return;
+    const pendingClips = clips.filter(c => c.status === 'PENDING' || c.status === 'PROCESSING');
+    const completedClips = clips.filter(c => c.status === 'SUCCESS' || c.status === 'FAILURE');
+
+    if (pendingClips.length === 0) {
+        pendingList.innerHTML = '<li class="muted">No pending clips.</li>';
+    } else {
+        for (const clip of pendingClips) {
+            const li = document.createElement("li");
+            li.className = "list-item";
+            const statusText = clip.status.charAt(0).toUpperCase() + clip.status.slice(1).toLowerCase();
+            li.innerHTML = `
+                <div class="list-item-content">
+                    <span class="list-item-title">${clip.title}</span>
+                    <span style="font-weight: 600; color: #d29922;">${statusText}...</span>
+                </div>`;
+            pendingList.appendChild(li);
+        }
     }
 
-    for (const clip of clips) {
-        const li = document.createElement("li");
-        li.className = "list-item";
-        
-        const statusColors = {
-            PENDING: '#e6edf3',
-            SUCCESS: '#388bfd',
-            FAILURE: '#f85149',
-            PROCESSING: '#d29922'
-        };
-        const statusText = clip.status.charAt(0).toUpperCase() + clip.status.slice(1).toLowerCase();
+    if (completedClips.length === 0) {
+        completedList.innerHTML = '<li class="muted">No completed clips.</li>';
+    } else {
+        for (const clip of completedClips) {
+            const li = document.createElement("li");
+            li.className = "list-item";
+            const isSuccess = clip.status === 'SUCCESS';
+            const statusColor = isSuccess ? '#388bfd' : '#f85149';
+            const statusText = isSuccess ? 'Completed' : 'Failed';
 
-        let content = `
-            <div class="list-item-content">
-                <div class="list-item-title-container">
-                     <span class="list-item-title">${clip.title}</span>
-                     <span class="list-item-size">(${prettySize(clip.size_bytes)})</span>
-                </div>
-                <div class="list-item-buttons">
-                    <span style="font-weight: 600; color: ${statusColors[clip.status] || '#e6edf3'}">${statusText}</span>
-        `;
-
-        if (clip.status === "SUCCESS") {
-            content += `<a href="#" onclick="downloadClip(${clip.id}, '${clip.title}', '${token}'); return false;" class="btn small" style="margin-left: 1rem;">Download</a>`;
+            let content = `
+                <div class="list-item-content">
+                    <div class="list-item-title-container">
+                        <span class="list-item-title">${clip.title}</span>
+                        <span class="list-item-size">(${prettySize(clip.size_bytes)})</span>
+                    </div>
+                    <div class="list-item-buttons">
+                        <span style="font-weight: 600; color: ${statusColor};">${statusText}</span>
+            `;
+            if (isSuccess) {
+                content += `<a href="#" onclick="downloadClip(${clip.id}, '${clip.title}', '${token}'); return false;" class="btn small" style="margin-left: 1rem;">Download</a>`;
+            }
+            content += `</div></div>`;
+            li.innerHTML = content;
+            completedList.appendChild(li);
         }
-        
-        content += `</div></div>`;
-        li.innerHTML = content;
-        list.appendChild(li);
     }
 }
 
@@ -204,9 +267,7 @@ async function downloadClip(clipId, filename, token) {
         const res = await fetch(`${BASE_URL}/api/clip/${clipId}/file`, {
             headers: { Authorization: `Bearer ${token}` },
         });
-
         if (!res.ok) throw new Error(`Server responded with status ${res.status}`);
-
         const blob = await res.blob();
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
