@@ -2,3 +2,8 @@ venv/
 downloads/
 app.db
 .env
+code/
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
