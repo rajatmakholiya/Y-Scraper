@@ -21,6 +21,8 @@ import tempfile
 import subprocess
 from functools import wraps
 from urllib.parse import urljoin, urlparse
+# NEW: Import timedelta for token expiration
+from datetime import timedelta
 
 import requests
 from flask import (
@@ -35,8 +37,7 @@ from flask_jwt_extended import (
 )
 from flask_cors import CORS
 import yt_dlp
-# NEW: Import the celery task
-from tasks import create_clip
+from tasks import create_clip, celery
 
 # -------------------- Load config --------------------
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -60,6 +61,8 @@ app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "http://localhost:8000"}})
 app.config["SECRET_KEY"] = SECRET_KEY
 app.config["JWT_SECRET_KEY"] = JWT_SECRET_KEY
+# MODIFIED: Set the token to expire in 1 day
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=1)
 app.config["PROPAGATE_EXCEPTIONS"] = True
 app.config['GOOGLE_CLIENT_ID'] = os.getenv('GOOGLE_CLIENT_ID')
 app.config['GOOGLE_CLIENT_SECRET'] = os.getenv('GOOGLE_CLIENT_SECRET')
@@ -73,6 +76,7 @@ google = oauth.register(
     client_kwargs={'scope': 'openid email profile'}
 )
 
+# ... (The rest of the file remains unchanged) ...
 # -------------------- DB helpers --------------------
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -92,7 +96,6 @@ CREATE TABLE IF NOT EXISTS downloads (
     created_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 );
-/* NEW: Add clips table */
 CREATE TABLE IF NOT EXISTS clips (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     download_id INTEGER NOT NULL,
@@ -151,27 +154,18 @@ def safe_title_from_url(url: str) -> str:
     base = re.sub(r"[^A-Za-z0-9._-]+", "_", base)
     return base[:120] or "download"
 
-# NEW: Timestamp validation function
 def is_valid_timestamp(timestamp: str) -> bool:
-    """
-    Validates HH:MM:SS or MM:SS format.
-    """
-    if not isinstance(timestamp, str):
-        return False
-    # This regex matches one or more digits, followed by a colon, and so on.
-    # It allows for formats like SS, MM:SS, HH:MM:SS.
+    if not isinstance(timestamp, str): return False
     return bool(re.match(r'^(\d+:)?(\d{1,2}:)?\d{1,2}$', timestamp))
 
 
 def head_probe(url: str, timeout=15):
-    """Return (content_type, content_length or None)"""
     try:
         resp = requests.head(url, allow_redirects=True, timeout=timeout)
         ct = resp.headers.get("Content-Type", "").lower()
         cl = resp.headers.get("Content-Length")
         return ct, int(cl) if cl and cl.isdigit() else None
     except Exception:
-        # fallback to GET
         resp = requests.get(url, allow_redirects=True, stream=True, timeout=timeout)
         ct = resp.headers.get("Content-Type", "").lower()
         cl = resp.headers.get("Content-Length")
@@ -183,38 +177,7 @@ def ensure_ffmpeg_available():
     if which("ffmpeg") is None:
         raise RuntimeError("ffmpeg is required but not found in PATH. Please install ffmpeg.")
 
-# -------------------- HLS helpers --------------------
-HLS_STREAM_RE = re.compile(r"#EXT-X-STREAM-INF:([^\n]+)\n([^\n]+)")
-ATTR_RE = re.compile(r'([A-Z0-9\-]+)=([^,]+)')
-
-def parse_master_playlist(text: str, base_url: str):
-    variants = []
-    for match in HLS_STREAM_RE.finditer(text):
-        attrs_line = match.group(1)
-        rel_uri = match.group(2).strip()
-        attrs = {k: v.strip().strip('"') for k, v in ATTR_RE.findall(attrs_line)}
-        bw = int(attrs.get("BANDWIDTH", "0"))
-        res = attrs.get("RESOLUTION")
-        width = height = 0
-        if res and "x" in res:
-            try:
-                width, height = map(int, res.lower().split("x"))
-            except Exception:
-                width = height = 0
-        abs_uri = urljoin(base_url, rel_uri)
-        variants.append({
-            "url": abs_uri,
-            "bandwidth": bw,
-            "width": width,
-            "height": height,
-        })
-    return variants
-
-def pick_best_variant(variants):
-    if not variants:
-        return None
-    return sorted(variants, key=lambda v: (v.get("height", 0), v.get("bandwidth", 0)), reverse=True)[0]
-
+# -------------------- Download Helpers (No Changes) --------------------
 def download_hls_to_mp4(master_url: str, out_dir: str, title_hint: str) -> str:
     ensure_ffmpeg_available()
     r = requests.get(master_url, timeout=20)
@@ -273,7 +236,6 @@ def download_hls_to_mp4(master_url: str, out_dir: str, title_hint: str) -> str:
     shutil.rmtree(work_dir, ignore_errors=True)
     return out_mp4
 
-# -------------------- MP4 direct download --------------------
 def download_mp4(url: str, out_dir: str, title_hint: str, max_mb=MAX_TOTAL_DOWNLOAD_MB) -> str:
     safe_title = os.path.splitext(safe_title_from_url(title_hint))[0]
     out_path_tmp = os.path.join(out_dir, f"{safe_title}.mp4.part")
@@ -296,12 +258,7 @@ def download_mp4(url: str, out_dir: str, title_hint: str, max_mb=MAX_TOTAL_DOWNL
     os.replace(out_path_tmp, out_path)
     return out_path
 
-# -------------------- NEW: YouTube Download Helper --------------------
 def download_youtube_video(url: str, out_dir: str) -> str:
-    """
-    Downloads a video from YouTube (or other yt-dlp supported sites).
-    Returns the path to the downloaded file.
-    """
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': os.path.join(out_dir, '%(title)s.%(ext)s'),
@@ -312,14 +269,9 @@ def download_youtube_video(url: str, out_dir: str) -> str:
         filename = ydl.prepare_filename(info)
         return filename
 
-# -------------------- UPDATED: URL Detection --------------------
 def detect_url_kind(url: str):
-    """
-    Detects if a URL is a YouTube link, HLS stream, direct MP4, or unknown.
-    """
     if "youtube.com" in url or "youtu.be" in url:
         return "youtube"
-    
     ct, _ = head_probe(url)
     if url.lower().endswith(".m3u8") or "application/vnd.apple.mpegurl" in ct or "application/x-mpegurl" in ct:
         return "hls"
@@ -451,6 +403,31 @@ def api_download_details(download_id):
     
     return jsonify({**dict(download), "clips": [dict(c) for c in clips_rows]})
 
+@app.route("/api/download/<int:download_id>/clips", methods=["DELETE"])
+@jwt_required()
+def api_clear_clips(download_id):
+    user_id = get_jwt_identity()
+    download = query_db("SELECT * FROM downloads WHERE id = ? AND user_id = ?", (download_id, user_id), one=True)
+    if not download:
+        return jsonify({"error": "Download not found"}), 404
+        
+    clips_to_delete = query_db("SELECT * FROM clips WHERE download_id = ?", (download_id,))
+    
+    for clip in clips_to_delete:
+        if clip["status"] == "PENDING" or clip["status"] == "PROCESSING":
+            celery.control.revoke(clip["task_id"], terminate=True)
+        
+        if clip["filepath"] and os.path.exists(clip["filepath"]):
+            try:
+                os.remove(clip["filepath"])
+            except OSError as e:
+                print(f"Error deleting clip file {clip['filepath']}: {e}")
+
+    execute_db("DELETE FROM clips WHERE download_id = ?", (download_id,))
+    
+    return jsonify({"message": "Clip queue cleared successfully"}), 200
+
+
 @app.route("/api/clip", methods=["POST"])
 @jwt_required()
 def api_create_clip():
@@ -460,7 +437,6 @@ def api_create_clip():
     start_time = data.get("start_time")
     end_time = data.get("end_time")
 
-    # MODIFIED: Add strict validation for timestamps
     if not all([download_id, start_time, end_time]):
         return jsonify({"error": "Missing required fields"}), 400
     
@@ -472,7 +448,6 @@ def api_create_clip():
         return jsonify({"error": "Download not found"}), 404
 
     base, _ = os.path.splitext(download["title"])
-    # MODIFIED: Improved filename sanitization
     safe_start = re.sub(r'[^0-9]', '-', start_time)
     safe_end = re.sub(r'[^0-9]', '-', end_time)
     clip_title = f"{base}_clip_{safe_start}_{safe_end}.mp4"
@@ -500,16 +475,14 @@ def api_clip_status(clip_id):
     task = create_clip.AsyncResult(clip["task_id"])
     status = task.state
 
-    # Only update the DB if the status has changed
     if status != clip["status"]:
         if status == "SUCCESS":
             output_path = task.result
             size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
             execute_db("UPDATE clips SET status=?, filepath=?, size_bytes=? WHERE id=?", ("SUCCESS", output_path, size, clip_id))
-        else: # Covers PENDING, FAILURE, etc.
+        else:
              execute_db("UPDATE clips SET status=? WHERE id=?", (status, clip_id))
 
-    # Return the latest status from the task, not the DB
     return jsonify({"status": status})
 
 
