@@ -1,3 +1,4 @@
+/* frontend/style.css */
 /* Root Variables for Dark Glassmorphism Theme */
 :root {
   --primary-bg-image: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 320"%3E%3Cpath fill="%231a202c" fill-opacity="1" d="M0,256L48,245.3C96,235,192,213,288,197.3C384,181,480,171,576,186.7C672,203,768,245,864,250.7C960,256,1056,224,1152,197.3C1248,171,1344,149,1392,138.7L1440,128L1440,0L1392,0C1344,0,1248,0,1152,0C1056,0,960,0,864,0C768,0,672,0,576,0C480,0,384,0,288,0C192,0,96,0,48,0L0,0Z"%3E%3C/path%3E%3C/svg%3E');
@@ -7,6 +8,8 @@
   --muted-text: #8b949e;     /* Gray for secondary info */
   --accent-color: #388bfd;    /* Bright blue for buttons and links */
   --accent-hover: #58a6ff;   /* Lighter blue for hover */
+  --danger-color: #f85149;    /* Red for delete button */
+  --danger-hover: #da3633;   /* Darker red for hover */
   --border-color: rgba(139, 148, 158, 0.3); /* Semi-transparent border */
   --shadow-color: rgba(0, 0, 0, 0.2);
   --font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
@@ -60,13 +63,13 @@ body {
     margin: 0;
 }
 
-/* Main Content & Grid Layout */
-.grid {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
+/* Main Content Layout */
+main.container {
+  display: flex;
+  flex-direction: column;
   gap: 2rem;
-  align-items: start;
 }
+
 
 /* Glassmorphism Effect for Cards */
 .card {
@@ -141,6 +144,19 @@ input[type="url"]:focus {
   font-size: 0.875rem;
 }
 
+/* Delete button style */
+.btn-delete {
+    background-color: rgba(248, 81, 73, 0.1);
+    border-color: rgba(248, 81, 73, 0.4);
+}
+
+.btn-delete:hover {
+    background-color: var(--danger-hover);
+    border-color: var(--danger-hover);
+    color: #ffffff;
+}
+
+
 /* Login Page Specifics */
 .center-container {
   display: flex;
@@ -175,10 +191,52 @@ input[type="url"]:focus {
 
 .list-item {
   padding: 1rem;
-  border-radius: 6px;
-  background-color: rgba(13, 17, 23, 0.5); /* Darker transparent item */
+  border-radius: 8px; /* Slightly more rounded */
+  background-color: rgba(13, 17, 23, 0.6); /* Darker transparent item */
   border: 1px solid var(--border-color);
   margin-bottom: 0.75rem;
+  transition: background-color 0.2s;
+}
+
+.list-item:hover {
+    background-color: rgba(29, 38, 51, 0.8); /* Highlight on hover */
+}
+
+/* MODIFIED: Flexbox layout for list items */
+.list-item-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap; /* Allow items to wrap to the next line */
+}
+
+.list-item-title-container {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    /* Allow this container to shrink if needed */
+    min-width: 100px;
+    flex: 1;
+}
+
+
+.list-item-title {
+    font-weight: 500;
+    white-space: normal; /* Allow text to wrap */
+    word-break: break-all; /* Break long words to prevent overflow */
+}
+
+.list-item-size {
+    font-size: 0.85rem;
+    color: var(--muted-text);
+    flex-shrink: 0; /* Prevent size from shrinking */
+}
+
+.list-item-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0; /* Prevent buttons from shrinking */
 }
 
 .list-item a {

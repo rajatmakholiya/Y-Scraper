@@ -114,30 +114,80 @@ function initializeDashboard(token) {
  * @param {string} token - The user's JWT token.
  */
 async function refreshRecent(token) {
-  const res = await apiCall('/api/recent', 'GET', null, token);
-  const list = document.getElementById('recent-list');
-  list.innerHTML = '';
+    const res = await apiCall('/api/recent', 'GET', null, token);
+    const list = document.getElementById('recent-list');
+    list.innerHTML = '';
 
-  if (!res || !res.downloads || res.downloads.length === 0) {
-    list.innerHTML = '<li class="muted">No downloads yet.</li>';
-    return;
-  }
+    if (!res || !res.downloads || res.downloads.length === 0) {
+        list.innerHTML = '<li class="muted">No downloads yet.</li>';
+        return;
+    }
 
-  for (const d of res.downloads) {
-    const li = document.createElement('li');
-    li.className = 'list-item';
-    
-    const a = document.createElement('a');
-    a.href = `#`; // Use # to prevent page reload
-    a.textContent = `${d.title} (${prettySize(d.size_bytes)})`;
-    a.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      downloadFile(d.id, d.title, token);
-    });
-    
-    li.appendChild(a);
-    list.appendChild(li);
-  }
+    for (const d of res.downloads) {
+        const li = document.createElement('li');
+        li.className = 'list-item';
+
+        // Container for title and buttons
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'list-item-content';
+
+        // Video Title
+        const titleSpan = document.createElement('span');
+        titleSpan.textContent = d.title;
+        titleSpan.className = 'list-item-title';
+        
+        const sizeSpan = document.createElement('span');
+        sizeSpan.textContent = `(${prettySize(d.size_bytes)})`;
+        sizeSpan.className = 'list-item-size';
+
+        const titleContainer = document.createElement('div');
+        titleContainer.appendChild(titleSpan);
+        titleContainer.appendChild(sizeSpan);
+
+        // Buttons Container
+        const buttonsDiv = document.createElement('div');
+        buttonsDiv.className = 'list-item-buttons';
+
+        // Clip Button
+        const clipBtn = document.createElement('a');
+        clipBtn.href = `clip.html?id=${d.id}`;
+        clipBtn.textContent = 'Clip';
+        clipBtn.className = 'btn small';
+        
+        // Delete Button
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.className = 'btn small btn-delete'; // Added btn-delete class
+        deleteBtn.onclick = () => {
+            if (confirm(`Are you sure you want to delete "${d.title}"?`)) {
+                deleteDownload(d.id, token);
+            }
+        };
+        
+        buttonsDiv.appendChild(clipBtn);
+        buttonsDiv.appendChild(deleteBtn);
+
+        contentDiv.appendChild(titleContainer);
+        contentDiv.appendChild(buttonsDiv);
+        
+        li.appendChild(contentDiv);
+        list.appendChild(li);
+    }
+}
+
+/**
+ * Deletes a downloaded file.
+ * @param {number} id - The ID of the download.
+ * @param {string} token - The user's JWT token.
+ */
+async function deleteDownload(id, token) {
+    const res = await apiCall(`/api/download/${id}`, 'DELETE', null, token);
+    if (res.error) {
+        alert('Error: ' + res.error);
+    } else {
+        // Refresh the list to show the item has been removed
+        await refreshRecent(token);
+    }
 }
 
 /**
@@ -148,7 +198,7 @@ async function refreshRecent(token) {
  */
 async function downloadFile(id, filenameHint, token) {
   try {
-    const res = await fetch(`/api/file/${id}`, {
+    const res = await fetch(`${BASE_URL}/api/file/${id}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
 
