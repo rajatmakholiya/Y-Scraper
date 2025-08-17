@@ -10,29 +10,28 @@
   <header class="topbar">
     <div class="container">
       <h2>Video Downloader</h2>
-      <div>
-        <button id="btn-logout" class="btn small">Logout</button>
-      </div>
+      <button id="btn-logout" class="btn small">Logout</button>
     </div>
   </header>
 
   <main class="container grid">
     <section class="card">
-      <h3>Download a permitted video</h3>
-      <p class="muted">Provide a direct MP4 URL or a non-DRM HLS master (.m3u8).</p>
+      <h3>Download New Video</h3>
+      <p class="muted">
+        Enter a URL from YouTube, or a direct link to an MP4 or M3U8 file.
+      </p>
       <div class="form-row">
-        <input id="video-url" type="url" placeholder="https://example.com/video.mp4 or master.m3u8" />
+        <input id="video-url" type="url" placeholder="https://..." />
         <button id="btn-download" class="btn">Start Download</button>
       </div>
-
-      <div id="progress-area" class="mt">
-        <div id="progress-msg" "muted"></div>
-        <progress id="progress-bar" value="0" max="100" style="width:100%; display:none"></progress>
+      <div id="progress-area">
+        <div id="progress-msg"></div>
+        <progress id="progress-bar" value="0" max="100" style="display:none;"></progress>
       </div>
     </section>
 
     <section class="card">
-      <h3>Recent downloads</h3>
+      <h3>Recent Downloads</h3>
       <ul id="recent-list" class="list"></ul>
     </section>
   </main>
