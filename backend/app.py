@@ -23,14 +23,18 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from flask import (
-    Flask, request, jsonify, send_file, abort, g
+    Flask, request, jsonify, send_file, abort, g, redirect, url_for
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
+from authlib.integrations.flask_client import OAuth
 from flask_jwt_extended import (
     JWTManager, create_access_token, jwt_required,
     get_jwt_identity
 )
+from flask_cors import CORS
+# NEW: Import yt-dlp library
+import yt_dlp
 
 # -------------------- Load config --------------------
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -45,24 +49,38 @@ DOWNLOAD_ROOT = os.getenv("DOWNLOAD_ROOT", os.path.join(BASE_DIR, "downloads"))
 MAX_TOTAL_DOWNLOAD_MB = int(os.getenv("MAX_TOTAL_DOWNLOAD_MB", "2048"))
 MIN_SECONDS_BETWEEN_JOBS = int(os.getenv("MIN_SECONDS_BETWEEN_JOBS", "5"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", str(1 * 1024 * 1024)))  # 1 MB
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:8000")
 
 os.makedirs(DOWNLOAD_ROOT, exist_ok=True)
 
 # -------------------- Flask app --------------------
 app = Flask(__name__)
+# Initialize CORS to allow requests from the frontend
+CORS(app, resources={r"/api/*": {"origins": "http://localhost:8000"}})
 app.config["SECRET_KEY"] = SECRET_KEY
 app.config["JWT_SECRET_KEY"] = JWT_SECRET_KEY
 app.config["PROPAGATE_EXCEPTIONS"] = True
+app.config['GOOGLE_CLIENT_ID'] = os.getenv('GOOGLE_CLIENT_ID')
+app.config['GOOGLE_CLIENT_SECRET'] = os.getenv('GOOGLE_CLIENT_SECRET')
 
 jwt = JWTManager(app)
+oauth = OAuth(app)
+
+google = oauth.register(
+    name='google',
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={
+        'scope': 'openid email profile'
+    }
+)
 
 # -------------------- DB helpers --------------------
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
+    email TEXT NOT NULL,
+    google_sub TEXT UNIQUE NOT NULL,
     created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS downloads (
@@ -106,10 +124,6 @@ def execute_db(query, args=()):
     cur = get_db().execute(query, args)
     get_db().commit()
     return cur.lastrowid
-
-@app.before_first_request
-def _startup():
-    init_db()
 
 # -------------------- Utilities --------------------
 def human_size(num_bytes: int) -> str:
@@ -236,14 +250,6 @@ def download_hls_to_mp4(master_url: str, out_dir: str, title_hint: str) -> str:
     return out_mp4
 
 # -------------------- MP4 direct download --------------------
-def detect_url_kind(url: str):
-    ct, _ = head_probe(url)
-    if url.lower().endswith(".m3u8") or "application/vnd.apple.mpegurl" in ct or "application/x-mpegurl" in ct:
-        return "hls"
-    if url.lower().endswith(".mp4") or ct.startswith("video/mp4"):
-        return "mp4"
-    return "unknown"
-
 def download_mp4(url: str, out_dir: str, title_hint: str, max_mb=MAX_TOTAL_DOWNLOAD_MB) -> str:
     safe_title = os.path.splitext(safe_title_from_url(title_hint))[0]
     out_path_tmp = os.path.join(out_dir, f"{safe_title}.mp4.part")
@@ -266,39 +272,69 @@ def download_mp4(url: str, out_dir: str, title_hint: str, max_mb=MAX_TOTAL_DOWNL
     os.replace(out_path_tmp, out_path)
     return out_path
 
-# -------------------- Auth helpers --------------------
-def get_user_by_email(email):
-    return query_db("SELECT * FROM users WHERE email = ?", (email,), one=True)
+# -------------------- NEW: YouTube Download Helper --------------------
+def download_youtube_video(url: str, out_dir: str) -> str:
+    """
+    Downloads a video from YouTube (or other yt-dlp supported sites).
+    Returns the path to the downloaded file.
+    """
+    ydl_opts = {
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': os.path.join(out_dir, '%(title)s.%(ext)s'),
+        'max_filesize': MAX_TOTAL_DOWNLOAD_MB * 1024 * 1024,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filename = ydl.prepare_filename(info)
+        return filename
+
+# -------------------- UPDATED: URL Detection --------------------
+def detect_url_kind(url: str):
+    """
+    Detects if a URL is a YouTube link, HLS stream, direct MP4, or unknown.
+    """
+    if "youtube.com" in url or "youtu.be" in url:
+        return "youtube"
+    
+    ct, _ = head_probe(url)
+    if url.lower().endswith(".m3u8") or "application/vnd.apple.mpegurl" in ct or "application/x-mpegurl" in ct:
+        return "hls"
+    if url.lower().endswith(".mp4") or ct.startswith("video/mp4"):
+        return "mp4"
+    return "unknown"
+
+# -------------------- Auth endpoints --------------------
+@app.route("/api/login/google")
+def google_login():
+    redirect_uri = url_for('google_auth', _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+@app.route("/api/auth/google/callback")
+def google_auth():
+    token = google.authorize_access_token()
+    user_info = token.get('userinfo')
+    
+    if not user_info:
+        return jsonify({"error": "Failed to fetch user info from Google"}), 400
+
+    google_sub = user_info['sub']
+    email = user_info['email']
+
+    user = query_db("SELECT * FROM users WHERE google_sub = ?", (google_sub,), one=True)
+    if not user:
+        user_id = execute_db(
+            "INSERT INTO users (email, google_sub, created_at) VALUES (?, ?, ?)",
+            (email, google_sub, int(time.time()))
+        )
+    else:
+        user_id = user['id']
+    
+    # FIX: Ensure the identity is a string for the JWT token
+    access_token = create_access_token(identity=str(user_id))
+
+    return redirect(f"{FRONTEND_URL}/dashboard.html?token={access_token}")
 
 # -------------------- API endpoints --------------------
-@app.route("/api/register", methods=["POST"])
-def api_register():
-    data = request.get_json() or {}
-    email = (data.get("email") or "").strip().lower()
-    password = data.get("password") or ""
-    if not email or not password:
-        return jsonify({"error": "email and password are required"}), 400
-    if get_user_by_email(email):
-        return jsonify({"error": "email already exists"}), 400
-    pwd_hash = generate_password_hash(password)
-    user_id = execute_db(
-        "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
-        (email, pwd_hash, int(time.time()))
-    )
-    access_token = create_access_token(identity=user_id)
-    return jsonify({"access_token": access_token, "user_id": user_id}), 201
-
-@app.route("/api/login", methods=["POST"])
-def api_login():
-    data = request.get_json() or {}
-    email = (data.get("email") or "").strip().lower()
-    password = data.get("password") or ""
-    row = get_user_by_email(email)
-    if not row or not check_password_hash(row["password_hash"], password):
-        return jsonify({"error": "invalid credentials"}), 401
-    access_token = create_access_token(identity=row["id"])
-    return jsonify({"access_token": access_token, "user_id": row["id"]}), 200
-
 @app.route("/api/recent", methods=["GET"])
 @jwt_required()
 def api_recent():
@@ -324,7 +360,6 @@ def api_download():
     if not url:
         return jsonify({"error": "url is required"}), 400
 
-    # rate-limit per JWT session (simple, stored in DB not required; use query)
     last_row = query_db("SELECT created_at FROM downloads WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", (user_id,), one=True)
     if last_row:
         last_ts = last_row["created_at"]
@@ -336,13 +371,15 @@ def api_download():
 
     try:
         kind = detect_url_kind(url)
-        title_hint = url
-        if kind == "mp4":
-            out_path = download_mp4(url, user_dir, title_hint)
+        
+        if kind == "youtube":
+            out_path = download_youtube_video(url, user_dir)
+        elif kind == "mp4":
+            out_path = download_mp4(url, user_dir, url)
         elif kind == "hls":
-            out_path = download_hls_to_mp4(url, user_dir, title_hint)
+            out_path = download_hls_to_mp4(url, user_dir, url)
         else:
-            return jsonify({"error": "Unsupported URL type. Only direct MP4 or non-DRM HLS (.m3u8) are supported."}), 400
+            return jsonify({"error": "Unsupported URL type. Only YouTube, direct MP4 or non-DRM HLS (.m3u8) are supported."}), 400
 
         size = os.path.getsize(out_path)
         dl_id = execute_db(
@@ -373,5 +410,6 @@ def api_file(download_id):
 
 # -------------------- Run --------------------
 if __name__ == "__main__":
-    # dev server
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    with app.app_context():
+        init_db()
+    app.run(debug=True, port=5000)
