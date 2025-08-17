@@ -1,0 +1,5 @@
+flask
+flask-jwt-extended
+python-dotenv
+werkzeug
+requests
