@@ -1,7 +1,7 @@
 // frontend/script.js
 // API Client and all frontend logic for the application.
 
-const BASE_URL = "http://127.0.0.1:5000";  // empty means same origin; set to 'http://127.0.0.1:5000' if needed
+const BASE_URL = "http://127.0.0.1:5000";
 
 /**
  * A helper function to make API calls to the backend.
