@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dashboard — Video Downloader</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container">
+      <h2>Video Downloader</h2>
+      <div>
+        <button id="btn-logout" class="btn small">Logout</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container grid">
+    <section class="card">
+      <h3>Download a permitted video</h3>
+      <p class="muted">Provide a direct MP4 URL or a non-DRM HLS master (.m3u8).</p>
+      <div class="form-row">
+        <input id="video-url" type="url" placeholder="https://example.com/video.mp4 or master.m3u8" />
+        <button id="btn-download" class="btn">Start Download</button>
+      </div>
+
+      <div id="progress-area" class="mt">
+        <div id="progress-msg" "muted"></div>
+        <progress id="progress-bar" value="0" max="100" style="width:100%; display:none"></progress>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Recent downloads</h3>
+      <ul id="recent-list" class="list"></ul>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
