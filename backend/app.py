@@ -1,3 +1,4 @@
+# code/backend/app.py
 #!/usr/bin/env python3
 """
 backend/app.py
@@ -33,8 +34,9 @@ from flask_jwt_extended import (
     get_jwt_identity
 )
 from flask_cors import CORS
-# NEW: Import yt-dlp library
 import yt_dlp
+# NEW: Import the celery task
+from tasks import create_clip
 
 # -------------------- Load config --------------------
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -55,7 +57,6 @@ os.makedirs(DOWNLOAD_ROOT, exist_ok=True)
 
 # -------------------- Flask app --------------------
 app = Flask(__name__)
-# Initialize CORS to allow requests from the frontend
 CORS(app, resources={r"/api/*": {"origins": "http://localhost:8000"}})
 app.config["SECRET_KEY"] = SECRET_KEY
 app.config["JWT_SECRET_KEY"] = JWT_SECRET_KEY
@@ -69,9 +70,7 @@ oauth = OAuth(app)
 google = oauth.register(
     name='google',
     server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-    client_kwargs={
-        'scope': 'openid email profile'
-    }
+    client_kwargs={'scope': 'openid email profile'}
 )
 
 # -------------------- DB helpers --------------------
@@ -92,6 +91,18 @@ CREATE TABLE IF NOT EXISTS downloads (
     size_bytes INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+/* NEW: Add clips table */
+CREATE TABLE IF NOT EXISTS clips (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    download_id INTEGER NOT NULL,
+    task_id TEXT NOT NULL, /* Celery task ID */
+    title TEXT NOT NULL,
+    filepath TEXT,
+    size_bytes INTEGER,
+    status TEXT NOT NULL DEFAULT 'PENDING', /* PENDING, SUCCESS, FAILURE */
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (download_id) REFERENCES downloads (id) ON DELETE CASCADE
 );
 """
 
@@ -127,6 +138,7 @@ def execute_db(query, args=()):
 
 # -------------------- Utilities --------------------
 def human_size(num_bytes: int) -> str:
+    if num_bytes is None: return "N/A"
     for unit in ["B", "KB", "MB", "GB", "TB"]:
         if num_bytes < 1024.0:
             return f"{num_bytes:.2f} {unit}"
@@ -138,6 +150,18 @@ def safe_title_from_url(url: str) -> str:
     base = os.path.basename(parsed.path) or "download"
     base = re.sub(r"[^A-Za-z0-9._-]+", "_", base)
     return base[:120] or "download"
+
+# NEW: Timestamp validation function
+def is_valid_timestamp(timestamp: str) -> bool:
+    """
+    Validates HH:MM:SS or MM:SS format.
+    """
+    if not isinstance(timestamp, str):
+        return False
+    # This regex matches one or more digits, followed by a colon, and so on.
+    # It allows for formats like SS, MM:SS, HH:MM:SS.
+    return bool(re.match(r'^(\d+:)?(\d{1,2}:)?\d{1,2}$', timestamp))
+
 
 def head_probe(url: str, timeout=15):
     """Return (content_type, content_length or None)"""
@@ -302,7 +326,6 @@ def detect_url_kind(url: str):
     if url.lower().endswith(".mp4") or ct.startswith("video/mp4"):
         return "mp4"
     return "unknown"
-
 # -------------------- Auth endpoints --------------------
 @app.route("/api/login/google")
 def google_login():
@@ -329,9 +352,7 @@ def google_auth():
     else:
         user_id = user['id']
     
-    # FIX: Ensure the identity is a string for the JWT token
     access_token = create_access_token(identity=str(user_id))
-
     return redirect(f"{FRONTEND_URL}/dashboard.html?token={access_token}")
 
 # -------------------- API endpoints --------------------
@@ -339,16 +360,20 @@ def google_auth():
 @jwt_required()
 def api_recent():
     user_id = get_jwt_identity()
-    rows = query_db("SELECT id, url, title, filepath, size_bytes, created_at FROM downloads WHERE user_id = ? ORDER BY id DESC LIMIT 50", (user_id,))
+    rows = query_db("SELECT * FROM downloads WHERE user_id = ? ORDER BY id DESC LIMIT 50", (user_id,))
+    
     items = []
+    ids_to_delete = []
     for r in rows:
-        items.append({
-            "id": r["id"],
-            "url": r["url"],
-            "title": r["title"],
-            "size_bytes": r["size_bytes"],
-            "created_at": r["created_at"],
-        })
+        if os.path.exists(r["filepath"]):
+            items.append(dict(r))
+        else:
+            ids_to_delete.append(r["id"])
+
+    if ids_to_delete:
+        placeholders = ','.join('?' for _ in ids_to_delete)
+        execute_db(f"DELETE FROM downloads WHERE id IN ({placeholders})", ids_to_delete)
+
     return jsonify({"downloads": items})
 
 @app.route("/api/download", methods=["POST"])
@@ -362,16 +387,14 @@ def api_download():
 
     last_row = query_db("SELECT created_at FROM downloads WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", (user_id,), one=True)
     if last_row:
-        last_ts = last_row["created_at"]
-        if time.time() - last_ts < MIN_SECONDS_BETWEEN_JOBS:
-            return jsonify({"error": f"Please wait {MIN_SECONDS_BETWEEN_JOBS} seconds between downloads."}), 429
+        if time.time() - last_row["created_at"] < MIN_SECONDS_BETWEEN_JOBS:
+            return jsonify({"error": f"Please wait {MIN_SECONDS_BETWEEN_JOBS}s"}), 429
 
     user_dir = os.path.join(DOWNLOAD_ROOT, f"user_{user_id}")
     os.makedirs(user_dir, exist_ok=True)
 
     try:
         kind = detect_url_kind(url)
-        
         if kind == "youtube":
             out_path = download_youtube_video(url, user_dir)
         elif kind == "mp4":
@@ -379,20 +402,14 @@ def api_download():
         elif kind == "hls":
             out_path = download_hls_to_mp4(url, user_dir, url)
         else:
-            return jsonify({"error": "Unsupported URL type. Only YouTube, direct MP4 or non-DRM HLS (.m3u8) are supported."}), 400
+            return jsonify({"error": "Unsupported URL type"}), 400
 
         size = os.path.getsize(out_path)
         dl_id = execute_db(
             "INSERT INTO downloads (user_id, url, title, filepath, size_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             (user_id, url, os.path.basename(out_path), out_path, size, int(time.time()))
         )
-        return jsonify({
-            "id": dl_id,
-            "title": os.path.basename(out_path),
-            "size_bytes": size,
-            "download_url": f"/api/file/{dl_id}"
-        }), 201
-
+        return jsonify({"id": dl_id, "title": os.path.basename(out_path), "size_bytes": size}), 201
     except Exception as e:
         return jsonify({"error": f"Download failed: {str(e)}"}), 500
 
@@ -401,12 +418,112 @@ def api_download():
 def api_file(download_id):
     user_id = get_jwt_identity()
     row = query_db("SELECT * FROM downloads WHERE id = ? AND user_id = ?", (download_id, user_id), one=True)
-    if not row:
+    if not row or not os.path.exists(row["filepath"]):
         return abort(404)
-    path = row["filepath"]
-    if not os.path.exists(path):
+    return send_file(row["filepath"], as_attachment=True, download_name=row["title"])
+
+@app.route("/api/download/<int:download_id>", methods=["DELETE"])
+@jwt_required()
+def api_delete_download(download_id):
+    user_id = get_jwt_identity()
+    row = query_db("SELECT * FROM downloads WHERE id = ? AND user_id = ?", (download_id, user_id), one=True)
+    if not row: return abort(404)
+    
+    try:
+        if os.path.exists(row["filepath"]):
+            os.remove(row["filepath"])
+    except OSError as e:
+        return jsonify({"error": "Failed to delete file"}), 500
+
+    execute_db("DELETE FROM downloads WHERE id = ?", (download_id,))
+    return jsonify({"message": "Deleted"}), 200
+
+# -------------------- Clip endpoints --------------------
+@app.route("/api/download/<int:download_id>/details", methods=["GET"])
+@jwt_required()
+def api_download_details(download_id):
+    user_id = get_jwt_identity()
+    download = query_db("SELECT * FROM downloads WHERE id = ? AND user_id = ?", (download_id, user_id), one=True)
+    if not download:
         return abort(404)
-    return send_file(path, as_attachment=True, download_name=row["title"])
+
+    clips_rows = query_db("SELECT * FROM clips WHERE download_id = ? ORDER BY created_at DESC", (download_id,))
+    
+    return jsonify({**dict(download), "clips": [dict(c) for c in clips_rows]})
+
+@app.route("/api/clip", methods=["POST"])
+@jwt_required()
+def api_create_clip():
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    download_id = data.get("download_id")
+    start_time = data.get("start_time")
+    end_time = data.get("end_time")
+
+    # MODIFIED: Add strict validation for timestamps
+    if not all([download_id, start_time, end_time]):
+        return jsonify({"error": "Missing required fields"}), 400
+    
+    if not is_valid_timestamp(start_time) or not is_valid_timestamp(end_time):
+        return jsonify({"error": "Invalid timestamp format. Use HH:MM:SS or MM:SS."}), 400
+
+    download = query_db("SELECT * FROM downloads WHERE id = ? AND user_id = ?", (download_id, user_id), one=True)
+    if not download:
+        return jsonify({"error": "Download not found"}), 404
+
+    base, _ = os.path.splitext(download["title"])
+    # MODIFIED: Improved filename sanitization
+    safe_start = re.sub(r'[^0-9]', '-', start_time)
+    safe_end = re.sub(r'[^0-9]', '-', end_time)
+    clip_title = f"{base}_clip_{safe_start}_{safe_end}.mp4"
+    clip_dir = os.path.join(DOWNLOAD_ROOT, f"user_{user_id}", "clips")
+    output_path = os.path.join(clip_dir, clip_title)
+
+    task = create_clip.delay(download["filepath"], output_path, start_time, end_time)
+    
+    clip_id = execute_db(
+        "INSERT INTO clips (download_id, task_id, title, created_at) VALUES (?, ?, ?, ?)",
+        (download_id, task.id, clip_title, int(time.time()))
+    )
+    return jsonify({"clip_id": clip_id}), 202
+
+@app.route("/api/clip/<int:clip_id>/status", methods=["GET"])
+@jwt_required()
+def api_clip_status(clip_id):
+    user_id = get_jwt_identity()
+    clip = query_db(
+        "SELECT c.* FROM clips c JOIN downloads d ON c.download_id = d.id WHERE c.id = ? AND d.user_id = ?",
+        (clip_id, user_id), one=True
+    )
+    if not clip: return abort(404)
+
+    task = create_clip.AsyncResult(clip["task_id"])
+    status = task.state
+
+    # Only update the DB if the status has changed
+    if status != clip["status"]:
+        if status == "SUCCESS":
+            output_path = task.result
+            size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+            execute_db("UPDATE clips SET status=?, filepath=?, size_bytes=? WHERE id=?", ("SUCCESS", output_path, size, clip_id))
+        else: # Covers PENDING, FAILURE, etc.
+             execute_db("UPDATE clips SET status=? WHERE id=?", (status, clip_id))
+
+    # Return the latest status from the task, not the DB
+    return jsonify({"status": status})
+
+
+@app.route("/api/clip/<int:clip_id>/file", methods=["GET"])
+@jwt_required()
+def api_clip_file(clip_id):
+    user_id = get_jwt_identity()
+    clip = query_db(
+        "SELECT c.* FROM clips c JOIN downloads d ON c.download_id = d.id WHERE c.id = ? AND d.user_id = ?",
+        (clip_id, user_id), one=True
+    )
+    if not clip or clip["status"] != "SUCCESS" or not clip["filepath"] or not os.path.exists(clip["filepath"]):
+        return abort(404)
+    return send_file(clip["filepath"], as_attachment=True, download_name=clip["title"])
 
 # -------------------- Run --------------------
 if __name__ == "__main__":
