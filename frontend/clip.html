@@ -18,13 +18,38 @@
 
   <main class="container">
     <section class="card">
-      <h3 id="video-title">Loading...</h3>
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+        <h3 id="video-title" style="margin-bottom: 0;">Loading...</h3>
+        <button id="btn-show-marker" class="btn">Mark Clips</button>
+      </div>
+      
       <video id="video-player" controls style="width: 100%; border-radius: 8px; margin-top: 1rem; background-color: #000;"></video>
+      
+      <div id="progress-bar-container" class="progress-bar-container">
+          <div id="progress-bar-fill" class="progress-bar-fill"></div>
+      </div>
+
+      <div id="marker-bar" class="marker-bar" style="display: none;">
+        <div class="marker-left-panel">
+          <div class="marker-controls">
+            <button id="btn-mark-in-out" class="btn">Mark In</button>
+            <div id="marker-feedback" class="marker-feedback"></div>
+          </div>
+          <h4>Marked Clips</h4>
+          <ul id="marked-clips-list" class="list">
+            <li class="muted">No clips marked yet.</li>
+          </ul>
+        </div>
+        <div class="marker-right-panel">
+            <div id="queue-spinner" class="spinner" style="display: none; margin: 0 auto;"></div>
+            <button id="btn-queue-all" class="btn" disabled>Queue All Marked Clips</button>
+        </div>
+      </div>
     </section>
 
     <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 2rem;">
         <section class="card">
-            <h3>Create a New Clip</h3>
+            <h3>Create a New Clip (Manual)</h3>
             <p class="muted">
                 Use the player to find timestamps. Format: HH:MM:SS or MM:SS.
             </p>
@@ -41,12 +66,10 @@
               <h3>Clip Queues</h3>
               <button id="btn-clear-queue" class="btn small btn-delete">Clear All</button>
             </div>
-
             <h4 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Pending &amp; Processing</h4>
             <ul id="pending-list" class="list">
                 <li class="muted">No pending clips.</li>
             </ul>
-
             <h4 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Completed</h4>
             <ul id="completed-list" class="list">
                 <li class="muted">No completed clips.</li>

@@ -99,7 +99,6 @@ main.container {
   gap: 0.5rem;
 }
 
-/* MODIFIED: Applied styles to input[type="text"] as well */
 input[type="url"],
 input[type="text"] {
   flex: 1;
@@ -112,7 +111,6 @@ input[type="text"] {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-/* MODIFIED: Applied focus styles to input[type="text"] as well */
 input[type="url"]:focus,
 input[type="text"]:focus {
   outline: none;
@@ -142,6 +140,14 @@ input[type="text"]:focus {
   border-color: var(--accent-color);
   color: #ffffff; /* White text on hover for contrast */
 }
+
+.btn:disabled {
+    background-color: rgba(56, 68, 87, 0.5);
+    border-color: rgba(56, 68, 87, 0.8);
+    color: var(--muted-text);
+    cursor: not-allowed;
+}
+
 
 .btn.small {
   padding: 0.4rem 1rem;
@@ -265,4 +271,103 @@ progress {
     width: 100%;
     margin-top: 0.5rem;
     accent-color: var(--accent-color);
+}
+
+/* Custom Progress Bar Styles */
+.progress-bar-container {
+    width: 100%;
+    height: 10px;
+    background-color: rgba(13, 17, 23, 0.6);
+    border-radius: 5px;
+    margin-top: 0.5rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    width: 0%;
+    height: 100%;
+    background-color: var(--accent-color);
+    border-radius: 5px;
+    transition: width 0.1s linear;
+}
+
+.progress-marker {
+    position: absolute;
+    top: 0;
+    width: 3px;
+    height: 100%;
+}
+
+.marker-in {
+    background-color: #3fb950; /* Green */
+}
+
+.marker-out {
+    background-color: var(--danger-color); /* Red */
+}
+
+
+/* Styles for the Marking Bar */
+.marker-bar {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    gap: 2rem;
+    align-items: flex-start;
+}
+
+.marker-left-panel {
+    flex: 2; /* Take more space */
+    display: flex;
+    flex-direction: column;
+}
+
+.marker-right-panel {
+    flex: 1; /* Take less space */
+    display: flex;
+    flex-direction: column;
+    align-items: stretch; 
+    gap: 1rem;
+}
+
+.marker-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.marker-feedback {
+    font-weight: 600;
+    color: var(--accent-color);
+}
+
+.marked-clips-section h4 {
+    margin-bottom: 0.5rem;
+}
+
+/* Style for remove button in marked clips list */
+.btn-remove-marked {
+    background: none;
+    border: none;
+    color: var(--danger-color);
+    cursor: pointer;
+    font-size: 1.2rem;
+    padding: 0 0.5rem;
+}
+
+/* NEW: Loading Spinner Styles */
+.spinner {
+    border: 4px solid rgba(255, 255, 255, 0.1);
+    border-left-color: var(--accent-color);
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
 }

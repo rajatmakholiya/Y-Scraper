@@ -1,6 +1,11 @@
 // code/frontend/clip.js
 const BASE_URL = "http://127.0.0.1:5000";
 
+// ========== State for the new Marker UI ==========
+let isMarking = false;
+let markInTime = null;
+let markedClips = [];
+
 /**
  * A helper function to make API calls to the backend.
  */
@@ -36,6 +41,17 @@ function prettySize(b) {
     return `${(b / Math.pow(1024, i)).toFixed(2)} ${units[i]}`;
 }
 
+/**
+ * Formats seconds into HH:MM:SS string.
+ */
+function formatTime(totalSeconds) {
+    const hours = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
+    const minutes = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
+    const seconds = Math.floor(totalSeconds % 60).toString().padStart(2, '0');
+    return `${hours}:${minutes}:${seconds}`;
+}
+
+
 // ========== Page-specific Logic ==========
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -66,9 +82,16 @@ document.addEventListener("DOMContentLoaded", () => {
  * Initializes the clipping page.
  */
 async function initializeClipPage(token, downloadId) {
+    const videoPlayer = document.getElementById("video-player");
     const videoTitle = document.getElementById("video-title");
     const createClipButton = document.getElementById("btn-create-clip");
     const clearQueueButton = document.getElementById("btn-clear-queue");
+    // Marker UI elements
+    const showMarkerButton = document.getElementById("btn-show-marker");
+    const markerBar = document.getElementById("marker-bar");
+    const markInOutButton = document.getElementById("btn-mark-in-out");
+    const queueAllButton = document.getElementById("btn-queue-all");
+
 
     try {
         const data = await apiCall(`/api/download/${downloadId}/details`, "GET", null, token);
@@ -78,10 +101,21 @@ async function initializeClipPage(token, downloadId) {
         
         renderClips(data.clips, token);
 
+        // Event listeners for manual creation
         createClipButton.addEventListener("click", () => createClip(token, downloadId));
         clearQueueButton.addEventListener("click", () => clearQueue(token, downloadId));
 
-        // Periodically refresh the clips list to update their status
+        // Event listeners for interactive marking
+        showMarkerButton.addEventListener("click", () => {
+            const isHidden = markerBar.style.display === 'none';
+            markerBar.style.display = isHidden ? 'flex' : 'none';
+            showMarkerButton.textContent = isHidden ? 'Close Marker' : 'Mark Clips';
+        });
+        markInOutButton.addEventListener("click", handleMarkInOut);
+        queueAllButton.addEventListener("click", () => queueAllMarkedClips(token, downloadId));
+
+        videoPlayer.addEventListener('timeupdate', updateProgressBar);
+
         setInterval(() => refreshClips(token, downloadId), 3000);
     } catch (err) {
         alert("Failed to load video details: " + err.message);
@@ -112,8 +146,136 @@ async function loadVideoPlayer(token, downloadId) {
     }
 }
 
+// ========== NEW: Spinner and Loading State Functions ==========
+function showSpinner(show) {
+    const spinner = document.getElementById('queue-spinner');
+    spinner.style.display = show ? 'block' : 'none';
+}
+
+// ========== Interactive Marker Functions ==========
+
+function updateProgressBar() {
+    const videoPlayer = document.getElementById("video-player");
+    const barFill = document.getElementById("progress-bar-fill");
+    if (videoPlayer.duration) {
+        const percentage = (videoPlayer.currentTime / videoPlayer.duration) * 100;
+        barFill.style.width = `${percentage}%`;
+    }
+}
+
+function addMarkerOnBar(time, type) {
+    const videoPlayer = document.getElementById("video-player");
+    const barContainer = document.getElementById("progress-bar-container");
+    if (!videoPlayer.duration) return;
+
+    const percentage = (time / videoPlayer.duration) * 100;
+    const marker = document.createElement('div');
+    marker.className = `progress-marker marker-${type}`;
+    marker.style.left = `${percentage}%`;
+    marker.dataset.markerType = type; 
+    barContainer.appendChild(marker);
+}
+
+function clearMarkersOnBar() {
+    const barContainer = document.getElementById("progress-bar-container");
+    const markers = barContainer.querySelectorAll('.progress-marker');
+    markers.forEach(marker => marker.remove());
+}
+
+
+function handleMarkInOut() {
+    const videoPlayer = document.getElementById("video-player");
+    const markInOutButton = document.getElementById("btn-mark-in-out");
+    const feedbackDiv = document.getElementById("marker-feedback");
+    const currentTime = videoPlayer.currentTime;
+
+    if (!isMarking) {
+        clearMarkersOnBar();
+        markInTime = currentTime;
+        isMarking = true;
+        markInOutButton.textContent = "Mark Out";
+        feedbackDiv.textContent = `Marked In at: ${formatTime(markInTime)}`;
+        addMarkerOnBar(markInTime, 'in');
+    } else {
+        if (currentTime <= markInTime) {
+            feedbackDiv.textContent = "Error: Mark Out time must be after Mark In time.";
+            return;
+        }
+        
+        addMarkerOnBar(currentTime, 'out');
+        markedClips.push({ start: formatTime(markInTime), end: formatTime(currentTime) });
+        
+        isMarking = false;
+        markInTime = null;
+        markInOutButton.textContent = "Mark In";
+        feedbackDiv.textContent = `Clip added: ${markedClips[markedClips.length-1].start} - ${markedClips[markedClips.length-1].end}`;
+        
+        renderMarkedClips();
+    }
+}
+
+function renderMarkedClips() {
+    const list = document.getElementById("marked-clips-list");
+    const queueAllButton = document.getElementById("btn-queue-all");
+    list.innerHTML = "";
+
+    if (markedClips.length === 0) {
+        list.innerHTML = '<li class="muted">No clips marked yet.</li>';
+        queueAllButton.disabled = true;
+        return;
+    }
+
+    markedClips.forEach((clip, index) => {
+        const li = document.createElement("li");
+        li.className = "list-item";
+        li.innerHTML = `
+            <div class="list-item-content">
+                <span class="list-item-title">Clip: ${clip.start} - ${clip.end}</span>
+                <button class="btn-remove-marked" onclick="removeMarkedClip(${index})">&times;</button>
+            </div>
+        `;
+        list.appendChild(li);
+    });
+    
+    queueAllButton.disabled = false;
+}
+
+function removeMarkedClip(index) {
+    markedClips.splice(index, 1);
+    renderMarkedClips();
+}
+
+async function queueAllMarkedClips(token, downloadId) {
+    if (markedClips.length === 0) return;
+
+    showSpinner(true);
+    const queuePromises = markedClips.map(clip => 
+        apiCall("/api/clip", "POST", {
+            download_id: downloadId,
+            start_time: clip.start,
+            end_time: clip.end,
+        }, token)
+    );
+
+    try {
+        await Promise.all(queuePromises);
+        markedClips = [];
+        renderMarkedClips();
+        clearMarkersOnBar();
+        document.getElementById("marker-feedback").textContent = "All marked clips have been queued!";
+        await refreshClips(token, downloadId);
+    } catch (err) {
+        alert("Failed to queue all clips: " + err.message);
+    } finally {
+        showSpinner(false);
+    }
+}
+
+
+// ========== Existing Clip Queue Functions ==========
+
 /**
- * MODIFIED: Handles the creation of a new clip with immediate UI update.
+ * MODIFIED: Provides immediate feedback by manually adding a "Queued" item.
  */
 async function createClip(token, downloadId) {
     const startTimeInput = document.getElementById("start-time");
@@ -121,54 +283,72 @@ async function createClip(token, downloadId) {
     const errorDiv = document.getElementById("clip-error");
     errorDiv.textContent = "";
 
-    if (!startTimeInput.value || !endTimeInput.value) {
+    const startTime = startTimeInput.value;
+    const endTime = endTimeInput.value;
+
+    if (!startTime || !endTime) {
         errorDiv.textContent = "Please provide both a start and end time.";
         return;
     }
 
+    // --- Immediate UI Update ---
+    // 1. Create a fake clip object to show in the UI right away.
+    const tempClip = { 
+        title: `Clip from ${startTime} to ${endTime}`, 
+        status: 'QUEUED' // A temporary status
+    };
+    // 2. Add it to the pending list.
+    const pendingList = document.getElementById("pending-list");
+    if (pendingList.querySelector('.muted')) {
+        pendingList.innerHTML = ''; // Clear "No pending clips" message
+    }
+    const li = document.createElement("li");
+    li.className = "list-item";
+    li.innerHTML = `
+        <div class="list-item-content">
+            <span class="list-item-title">${tempClip.title}</span>
+            <span style="font-weight: 600; color: #d29922;">Queued...</span>
+        </div>`;
+    pendingList.appendChild(li);
+    // --- End of Immediate Update ---
+
+
     try {
-        // 1. Send the request to the backend to start the clipping job.
         await apiCall("/api/clip", "POST", {
             download_id: downloadId,
-            start_time: startTimeInput.value,
-            end_time: endTimeInput.value,
+            start_time: startTime,
+            end_time: endTime,
         }, token);
         
-        // 2. Clear the input fields.
         startTimeInput.value = "";
         endTimeInput.value = "";
-
-        // 3. Perform a quick refresh to immediately show the new "Pending" item.
-        // We don't need to wait for the full polling cycle.
-        const data = await apiCall(`/api/download/${downloadId}/details`, "GET", null, token);
-        if (data && data.clips) {
-            renderClips(data.clips, token);
-        }
+        
+        // The regular refresh will eventually replace the fake item with the real one.
+        await refreshClips(token, downloadId);
 
     } catch (err) {
         errorDiv.textContent = "Error: " + err.message;
+        // If there was an error, refresh to remove the fake item.
+        await refreshClips(token, downloadId);
     }
 }
 
-/**
- * Handles clearing the entire clip queue.
- */
 async function clearQueue(token, downloadId) {
     if (!confirm("Are you sure you want to delete all clips and cancel any pending jobs? This cannot be undone.")) {
         return;
     }
+    showSpinner(true);
     try {
         await apiCall(`/api/download/${downloadId}/clips`, 'DELETE', null, token);
         await refreshClips(token, downloadId);
     } catch (err) {
         alert("Failed to clear queue: " + err.message);
+    } finally {
+        showSpinner(false);
     }
 }
 
 
-/**
- * Fetches the latest clips data, triggers status checks, and re-renders the lists.
- */
 async function refreshClips(token, downloadId) {
     try {
         const data = await apiCall(`/api/download/${downloadId}/details`, "GET", null, token);
@@ -179,7 +359,6 @@ async function refreshClips(token, downloadId) {
 
         const pendingClips = data.clips.filter(c => c.status === 'PENDING' || c.status === 'PROCESSING');
         
-        // If there are no pending clips, we don't need to do the heavy update.
         if (pendingClips.length === 0) {
             renderClips(data.clips, token);
             return;
@@ -202,9 +381,6 @@ async function refreshClips(token, downloadId) {
 }
 
 
-/**
- * Renders clips into separate pending and completed lists.
- */
 function renderClips(clips, token) {
     const pendingList = document.getElementById("pending-list");
     const completedList = document.getElementById("completed-list");
@@ -259,9 +435,6 @@ function renderClips(clips, token) {
     }
 }
 
-/**
- * Downloads a completed clip file.
- */
 async function downloadClip(clipId, filename, token) {
     try {
         const res = await fetch(`${BASE_URL}/api/clip/${clipId}/file`, {
