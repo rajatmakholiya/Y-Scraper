@@ -6,3 +6,5 @@ requests
 Authlib
 Flask-CORS
 yt-dlp
+celery
+redis
