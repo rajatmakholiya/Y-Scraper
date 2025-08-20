@@ -24,43 +24,72 @@ async function apiCall(path, method = "GET", body = null, token = null) {
     headers,
     body: body ? JSON.stringify(body) : null,
   });
-  // Check for empty or non-JSON responses
   const text = await res.text();
-  if (!text) {
-    return { error: "Empty response from server" };
+  if (!res.ok) {
+      try {
+          const parsed = JSON.parse(text);
+          throw new Error(parsed.error || "An unknown error occurred");
+      } catch (e) {
+          throw new Error(text || "An unknown error occurred");
+      }
   }
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    console.error("Invalid JSON response:", text);
-    return { error: "Invalid JSON response from server" };
-  }
+  return text ? JSON.parse(text) : {};
 }
 
 
 // ========== Page-specific Logic ==========
 
-// Run dashboard-specific code only if we are on dashboard.html
-if (window.location.pathname.endsWith("dashboard.html")) {
-  
-  // This logic runs first to capture the token from the URL after Google login
-  (function handleTokenFromUrl() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const tokenFromUrl = urlParams.get('token');
-    if (tokenFromUrl) {
-      localStorage.setItem('token', tokenFromUrl);
-      // Clean the URL to remove the token
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-  })();
+// Run page-specific logic after the DOM is loaded
+document.addEventListener("DOMContentLoaded", () => {
+    // If we are on the login page (index.html)
+    if (document.getElementById('btn-continue')) {
+        initializeLoginPage();
+    } 
+    // If we are on the dashboard page
+    else if (window.location.pathname.endsWith("dashboard.html")) {
+        // --- This was the logic for the original Google Login flow ---
+        /*
+        // This logic runs first to capture the token from the URL after Google login
+        (function handleTokenFromUrl() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const tokenFromUrl = urlParams.get('token');
+            if (tokenFromUrl) {
+            localStorage.setItem('token', tokenFromUrl);
+            // Clean the URL to remove the token
+            window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        })();
+        */
 
-  const token = localStorage.getItem('token');
-  if (!token) {
-    window.location.href = 'index.html';
-  } else {
-    // If a token exists, initialize the dashboard
-    initializeDashboard(token);
-  }
+        const token = localStorage.getItem('token');
+        if (!token) {
+            window.location.href = 'index.html'; // Redirect if no token
+        } else {
+            // If a token exists, initialize the dashboard
+            initializeDashboard(token);
+        }
+    }
+});
+
+/**
+ * Sets up the login page button for the new guest login.
+ */
+function initializeLoginPage() {
+    const continueButton = document.getElementById('btn-continue');
+    continueButton.addEventListener('click', async () => {
+        try {
+            const res = await apiCall('/api/login/guest', 'POST');
+            if (res.access_token) {
+                localStorage.setItem('token', res.access_token);
+                window.location.href = 'dashboard.html';
+            } else {
+                alert('Could not log in as guest. Check the backend server.');
+            }
+        } catch (error) {
+            console.error('Login failed:', error);
+            alert('Login failed: ' + error.message);
+        }
+    });
 }
 
 /**
@@ -91,17 +120,16 @@ function initializeDashboard(token) {
     progressBar.style.display = 'block';
     progressBar.value = 0;
 
-    const res = await apiCall('/api/download', 'POST', { url }, token);
-
-    if (res.error) {
-      alert('Error: ' + res.error);
-      progressMsg.textContent = '';
-      progressBar.style.display = 'none';
-    } else {
-      progressMsg.textContent = `Completed: ${res.title} (${prettySize(res.size_bytes)})`;
-      progressBar.value = 100;
-      urlInput.value = ''; // Clear the input field
-      await refreshRecent(token);
+    try {
+        const res = await apiCall('/api/download', 'POST', { url }, token);
+        progressMsg.textContent = `Completed: ${res.title} (${prettySize(res.size_bytes)})`;
+        progressBar.value = 100;
+        urlInput.value = ''; // Clear the input field
+        await refreshRecent(token);
+    } catch (err) {
+        alert('Error: ' + err.message);
+        progressMsg.textContent = 'Download failed.';
+        progressBar.style.display = 'none';
     }
   });
 
@@ -127,11 +155,9 @@ async function refreshRecent(token) {
         const li = document.createElement('li');
         li.className = 'list-item';
 
-        // Container for title and buttons
         const contentDiv = document.createElement('div');
         contentDiv.className = 'list-item-content';
 
-        // Video Title
         const titleSpan = document.createElement('span');
         titleSpan.textContent = d.title;
         titleSpan.className = 'list-item-title';
@@ -144,20 +170,17 @@ async function refreshRecent(token) {
         titleContainer.appendChild(titleSpan);
         titleContainer.appendChild(sizeSpan);
 
-        // Buttons Container
         const buttonsDiv = document.createElement('div');
         buttonsDiv.className = 'list-item-buttons';
 
-        // Clip Button
         const clipBtn = document.createElement('a');
         clipBtn.href = `clip.html?id=${d.id}`;
         clipBtn.textContent = 'Clip';
         clipBtn.className = 'btn small';
         
-        // Delete Button
         const deleteBtn = document.createElement('button');
         deleteBtn.textContent = 'Delete';
-        deleteBtn.className = 'btn small btn-delete'; // Added btn-delete class
+        deleteBtn.className = 'btn small btn-delete';
         deleteBtn.onclick = () => {
             if (confirm(`Are you sure you want to delete "${d.title}"?`)) {
                 deleteDownload(d.id, token);
@@ -181,43 +204,12 @@ async function refreshRecent(token) {
  * @param {string} token - The user's JWT token.
  */
 async function deleteDownload(id, token) {
-    const res = await apiCall(`/api/download/${id}`, 'DELETE', null, token);
-    if (res.error) {
-        alert('Error: ' + res.error);
-    } else {
-        // Refresh the list to show the item has been removed
+    try {
+        await apiCall(`/api/download/${id}`, 'DELETE', null, token);
         await refreshRecent(token);
+    } catch (err) {
+        alert('Error: ' + err.message);
     }
-}
-
-/**
- * Fetches a file using its ID and triggers a browser download.
- * @param {number} id - The ID of the download.
- * @param {string} filenameHint - The original title of the file.
- * @param {string} token - The user's JWT token.
- */
-async function downloadFile(id, filenameHint, token) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/file/${id}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-
-    if (!res.ok) {
-      throw new Error('Failed to fetch file. Server responded with ' + res.status);
-    }
-
-    const blob = await res.blob();
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = filenameHint; // Use the title as the default filename
-    document.body.appendChild(link);
-    link.click();
-    URL.revokeObjectURL(link.href);
-    link.remove();
-  } catch (error) {
-    console.error('Download error:', error);
-    alert('Could not download the file.');
-  }
 }
 
 /**

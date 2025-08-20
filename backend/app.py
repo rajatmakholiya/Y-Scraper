@@ -40,15 +40,22 @@ import yt_dlp
 from tasks import create_clip, celery
 
 # -------------------- Load config --------------------
+# BASE_DIR is the 'backend' directory where this script lives
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-ENV_PATH = os.path.join(BASE_DIR, ".env")
+# PROJECT_ROOT is the parent directory of 'backend', which is the main project folder
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+
+# Look for the .env file in the main project folder
+ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 if os.path.exists(ENV_PATH):
     load_dotenv(ENV_PATH)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-me-too")
-DATABASE = os.getenv("DATABASE", os.path.join(BASE_DIR, "app.db"))
-DOWNLOAD_ROOT = os.getenv("DOWNLOAD_ROOT", os.path.join(BASE_DIR, "downloads"))
+# Make the database path relative to the main project folder
+DATABASE = os.getenv("DATABASE", os.path.join(PROJECT_ROOT, "app.db"))
+# Make the download path relative to the main project folder
+DOWNLOAD_ROOT = os.getenv("DOWNLOAD_ROOT", os.path.join(PROJECT_ROOT, "downloads"))
 MAX_TOTAL_DOWNLOAD_MB = int(os.getenv("MAX_TOTAL_DOWNLOAD_MB", "2048"))
 MIN_SECONDS_BETWEEN_JOBS = int(os.getenv("MIN_SECONDS_BETWEEN_JOBS", "5"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", str(1 * 1024 * 1024)))  # 1 MB
@@ -279,33 +286,60 @@ def detect_url_kind(url: str):
         return "mp4"
     return "unknown"
 # -------------------- Auth endpoints --------------------
-@app.route("/api/login/google")
-def google_login():
-    redirect_uri = url_for('google_auth', _external=True)
-    return google.authorize_redirect(redirect_uri)
+# @app.route("/api/login/google")
+# def google_login():
+#     redirect_uri = url_for('google_auth', _external=True)
+#     return google.authorize_redirect(redirect_uri)
 
-@app.route("/api/auth/google/callback")
-def google_auth():
-    token = google.authorize_access_token()
-    user_info = token.get('userinfo')
+# @app.route("/api/auth/google/callback")
+# def google_auth():
+#     token = google.authorize_access_token()
+#     user_info = token.get('userinfo')
     
-    if not user_info:
-        return jsonify({"error": "Failed to fetch user info from Google"}), 400
+#     if not user_info:
+#         return jsonify({"error": "Failed to fetch user info from Google"}), 400
 
-    google_sub = user_info['sub']
-    email = user_info['email']
+#     google_sub = user_info['sub']
+#     email = user_info['email']
 
-    user = query_db("SELECT * FROM users WHERE google_sub = ?", (google_sub,), one=True)
+#     user = query_db("SELECT * FROM users WHERE google_sub = ?", (google_sub,), one=True)
+#     if not user:
+#         user_id = execute_db(
+#             "INSERT INTO users (email, google_sub, created_at) VALUES (?, ?, ?)",
+#             (email, google_sub, int(time.time()))
+#         )
+#     else:
+#         user_id = user['id']
+    
+#     access_token = create_access_token(identity=str(user_id))
+#     return redirect(f"{FRONTEND_URL}/dashboard.html?token={access_token}")
+
+# -------------------- Auth endpoints --------------------
+# -------------------- Auth endpoints --------------------
+@app.route("/api/login/guest", methods=["POST"])
+def guest_login():
+    """
+    Logs in a guest user by creating a default user if it doesn't exist
+    and returning an access token.
+    """
+    guest_email = "guest@example.com"
+    guest_sub = "guest_sub_001" # A unique identifier for our guest user
+
+    # Check if the guest user already exists
+    user = query_db("SELECT * FROM users WHERE email = ?", (guest_email,), one=True)
+
     if not user:
+        # If not, create the guest user
         user_id = execute_db(
             "INSERT INTO users (email, google_sub, created_at) VALUES (?, ?, ?)",
-            (email, google_sub, int(time.time()))
+            (guest_email, guest_sub, int(time.time()))
         )
     else:
         user_id = user['id']
-    
+
+    # Create an access token for the user_id
     access_token = create_access_token(identity=str(user_id))
-    return redirect(f"{FRONTEND_URL}/dashboard.html?token={access_token}")
+    return jsonify(access_token=access_token)
 
 # -------------------- API endpoints --------------------
 @app.route("/api/recent", methods=["GET"])
@@ -365,13 +399,26 @@ def api_download():
     except Exception as e:
         return jsonify({"error": f"Download failed: {str(e)}"}), 500
 
+# @app.route("/api/file/<int:download_id>", methods=["GET"])
+# @jwt_required()
+# def api_file(download_id):
+#     user_id = get_jwt_identity()
+#     row = query_db("SELECT * FROM downloads WHERE id = ? AND user_id = ?", (download_id, user_id), one=True)
+#     if not row or not os.path.exists(row["filepath"]):
+#         return abort(404)
+#     return send_file(row["filepath"], as_attachment=True, download_name=row["title"])
+
 @app.route("/api/file/<int:download_id>", methods=["GET"])
 @jwt_required()
 def api_file(download_id):
     user_id = get_jwt_identity()
     row = query_db("SELECT * FROM downloads WHERE id = ? AND user_id = ?", (download_id, user_id), one=True)
+    # MODIFIED: Check if the database record exists AND if the file exists on disk
     if not row or not os.path.exists(row["filepath"]):
-        return abort(404)
+        # If the file is missing, remove the broken record from the database
+        if row:
+            execute_db("DELETE FROM downloads WHERE id = ?", (download_id,))
+        return abort(404) # Return a "Not Found" error to the browser
     return send_file(row["filepath"], as_attachment=True, download_name=row["title"])
 
 @app.route("/api/download/<int:download_id>", methods=["DELETE"])
